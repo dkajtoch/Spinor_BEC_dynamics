@@ -12,9 +12,12 @@
 #include <boost/math/constants/constants.hpp>
 #include <boost/math/special_functions/pow.hpp>
 
+namespace spinor {
+
 typedef std::vector< std::complex<double> > state_type;
-const std::complex<double> re {1.0, 0.0};
-const std::complex<double> im {0.0, 1.0};
+constexpr std::complex<double> re {1.0, 0.0};
+constexpr std::complex<double> im {0.0, 1.0};
+constexpr double PI = boost::math::constants::pi<double>();
 
 /* ---------------------------------
  * Definition of the norm
@@ -32,10 +35,10 @@ double norm( const state_type& x )
 /* -------------------------------
  * Initial state definition
  * ------------------------------- */
-state_type polar( std::size_t N )
+state_type Fock_Mzero( std::size_t N, std::size_t l )
 {
    state_type x(N/2+1);
-   x[0] = {1.0, 0.0};
+   x.at(l)= {1.0, 0.0};
 
    return x;
 }
@@ -79,7 +82,7 @@ double varNs( const state_type& psi )
 /* -------------------------- */
 /* Quantum Fisher Information */
 /* -------------------------- */
-std::array<double,4> quantumFisherInf( const state_type &psi)
+std::array<double,4> quantumFisherInf( const state_type &psi )
 {
    std::size_t dim = psi.size();
    std::size_t N   = 2 * (dim-1);
@@ -135,171 +138,191 @@ std::array<double,4> quantumFisherInf( const state_type &psi)
 }
 
 /* ----------------------------------
- * Two types of propagators
+ * Equations of motion
  * ---------------------------------- */
-template<std::size_t N>
-void resonancePropagator( const state_type& x, state_type& dxdt, const double /* t */ )
-{
-   for( std::size_t i=0; i< N/2+1; i++ )
-   {
-      if( i == 0 )
-      {
-         dxdt[i] = -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i) *
-                                 static_cast<double>(N - 2*i - 1) *
-                                 static_cast<double>(i + 1) * 
-                                 static_cast<double>(i + 1)
-                                 ) * x[i+1];
-      }
 
-      if( i == N/2 )
-      {
-         dxdt[i] = -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i + 2) *
-                                    static_cast<double>(N - 2*i + 1) *
-                                    static_cast<double>(i) * 
-                                    static_cast<double>(i)
-                                 ) * x[i-1];
-      }
-
-      if( i>0 && i<N/2 )
-      {
-         dxdt[i] = -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i) *
-                                 static_cast<double>(N - 2*i - 1) *
-                                 static_cast<double>(i + 1) * 
-                                 static_cast<double>(i + 1)
-                                 ) * x[i+1]
-
-                     -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i + 2) *
-                                    static_cast<double>(N - 2*i + 1) *
-                                    static_cast<double>(i) * 
-                                    static_cast<double>(i)
-                                 ) * x[i-1];
-      }
-   }
-}
-
-template<std::size_t N>
-void symmetricPropagator( const state_type& x, state_type& dxdt, const double /* t */ )
-{
-   for( std::size_t i=0; i< (N/2+1); i++ )
-   {
-      dxdt[i] = -im * 2.0 * static_cast<double>(i) *
-         ( 2.0*static_cast<double>(N-2*i) - 1.0 ) * x[i];
-
-      if( i<N/2 )
-      {
-         dxdt[i] += -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i) *
-                                 static_cast<double>(N - 2*i - 1) *
-                                 static_cast<double>(i + 1) * 
-                                 static_cast<double>(i + 1)
-                                 ) * x[i+1];
-      }
-
-      if( i>0 )
-      {
-         dxdt[i] += -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i + 2) *
-                                    static_cast<double>(N - 2*i + 1) *
-                                    static_cast<double>(i) * 
-                                    static_cast<double>(i)
-                                 ) * x[i-1];
-      }
-   }
-}
-
-/* --------------------------------
- * Time Evolution class
- * -------------------------------- */
-template<std::size_t N>
-class timeEvolution {
+// ---------- 1st Policy ------------
+class symmetricDynamics {
 
 public:
-   
-   timeEvolution(std::string str)
-      : system_type{str}
+
+   std::size_t _N;   // number of atoms
+
+   // constructor
+   symmetricDynamics( std::size_t N )
+      : _N{N}
+   {}
+
+   void operator() ( const state_type& x, state_type& dxdt, const double /* t */ )
    {
-      if( str.compare("symmetric") != 0 && str.compare("resonance") != 0 )
-         throw std::runtime_error("Unrecognized system type!");
-   }
 
-   state_type propagate(double t0, double tk, double dt=1.0E-04)
-   {
-      using namespace boost::numeric::odeint;
-
-      // initial state
-      state_type x = polar(N);
-
-      // numerical integration
-      runge_kutta4< state_type > stepper;
-
-      if( system_type == "symmetric" )
-         integrate_const( stepper, symmetricPropagator<N>, x, t0, tk, dt );
-      else
-         integrate_const( stepper, resonancePropagator<N>, x, t0, tk, dt );
-     
-     return x; 
-   } 
-
-   void saveAll( double t0, double tk, std::size_t n, std::string filename, double dt=1.0E-04 )
-   {
-      using namespace boost::numeric::odeint;
-
-      // total number of steps
-      std::size_t total_steps = static_cast<std::size_t>( (tk-t0)/dt );
-      // write every
-      std::size_t write_step  = total_steps/n;
-
-     // physical quantities
-     double mean, var;
-     std::array<double,4> fis; 
-
-      // initial state
-      state_type x = polar(N);
-
-      // numerical integration
-      runge_kutta4< state_type > stepper;
-
-      // filename
-      std::ofstream file( filename, std::ofstream::out );
-
-      file << "__time__meanNs__varNs__optFq2x2__varQyz__varDxy__varY__" << std::endl;
-
-      double t = t0;
-      for( std::size_t i=0; i<total_steps; i++, t+=dt )
+      for( std::size_t i=0; i< (_N/2+1); i++ )
       {
-         // calculate physical quantities
-         mean = meanNs(x);
-         var  = varNs(x);
-         fis  = quantumFisherInf(x);
+         dxdt[i] = -im * 2.0 * static_cast<double>(i) *
+            ( 2.0*static_cast<double>(_N-2*i) - 1.0 ) * x[i];
 
-         // write to a file
-         if( i % write_step == 0 )
+         if( i<_N/2 )
          {
-            // calculate physical quantities
-            mean = meanNs(x);
-            var  = varNs(x);
-            fis  = quantumFisherInf(x);
-
-            file << t << "\t"
-               << mean << "\t"
-               << var << "\t"
-               << fis[0] << "\t"
-               << fis[1] << "\t"
-               << fis[2] << "\t"
-               << fis[3] << std::endl;
+            dxdt[i] += -im * 2.0 * std::sqrt( static_cast<double>(_N - 2*i) *
+                                    static_cast<double>(_N - 2*i - 1) *
+                                    static_cast<double>(i + 1) * 
+                                    static_cast<double>(i + 1)
+                                    ) * x[i+1];
          }
 
-         if( system_type == "symmetric" )
-            stepper.do_step( symmetricPropagator<N>, x, t, dt );
-         else 
-            stepper.do_step( resonancePropagator<N>, x, t, dt );
+         if( i>0 )
+         {
+            dxdt[i] += -im * 2.0 * std::sqrt( static_cast<double>(_N - 2*i + 2) *
+                                       static_cast<double>(_N - 2*i + 1) *
+                                       static_cast<double>(i) * 
+                                       static_cast<double>(i)
+                                    ) * x[i-1];
+         }
       }
+   }
 
-      file.close();
+};
+
+// ---------- 2nd Policy ------------
+class resonanceDynamics {
+
+public:
+
+   std::size_t N;
+
+   // constructor
+   resonanceDynamics( std::size_t N ) 
+      : N{N}
+   {}
+   
+   void operator() ( const state_type& x, state_type& dxdt, const double /* t*/ )
+   {
+      for( std::size_t i=0; i< N/2+1; i++ )
+      {
+         if( i == 0 )
+         {
+            dxdt[i] = -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i) *
+                                    static_cast<double>(N - 2*i - 1) *
+                                    static_cast<double>(i + 1) * 
+                                    static_cast<double>(i + 1)
+                                    ) * x[i+1];
+         }
+
+         if( i == N/2 )
+         {
+            dxdt[i] = -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i + 2) *
+                                       static_cast<double>(N - 2*i + 1) *
+                                       static_cast<double>(i) * 
+                                       static_cast<double>(i)
+                                    ) * x[i-1];
+         }
+
+         if( i>0 && i<N/2 )
+         {
+            dxdt[i] = -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i) *
+                                    static_cast<double>(N - 2*i - 1) *
+                                    static_cast<double>(i + 1) * 
+                                    static_cast<double>(i + 1)
+                                    ) * x[i+1]
+
+                      -im * 2.0 * std::sqrt( static_cast<double>(N - 2*i + 2) *
+                                       static_cast<double>(N - 2*i + 1) *
+                                       static_cast<double>(i) * 
+                                       static_cast<double>(i)
+                                    ) * x[i-1];
+         }
+      }
+   }
+};
+
+// specialization
+template< class systemType >
+class quantumSystem {
+
+public:
+
+   systemType s;
+
+   // constructor
+   quantumSystem( std::size_t N )
+      : s{ systemType(N) }
+   {}
+
+   // evolution of the quantum state from t0 till tk
+   void propagate( state_type& x, double t0, double tk, double dt=1.0E-04 )
+   {
+      using namespace boost::numeric::odeint;
+
+      // numerical integration
+      runge_kutta4< state_type > stepper;
+
+      integrate_const( stepper, std::ref(s), x, t0, tk, dt );
+   }
+
+   // integrate the system from time 't' until time t = t + n * dt
+   // define observer class to collect the data
+   template< class F >
+   void propagate( state_type& x, double t0, double tk, F Observer, std::size_t n=100, double dt=1.0E-04 )
+   {
+      using namespace boost::numeric::odeint;
+
+      // numerical integration
+      runge_kutta4< state_type > stepper;
+
+      double t = t0;
+      while( t <= tk )
+      {
+         // collect data
+         Observer( x, t );
+
+         integrate_n_steps( stepper, std::ref(s), x, t, dt, n );
+         t += n * dt;
+      }
+   }
+};
+
+/* ----------------------------------
+ * Write all quantities into a file
+ * ---------------------------------- */
+class writeAll {
+
+public:
+
+   // constructor
+   writeAll( std::string file_name ) 
+      : file{ std::ofstream( file_name, std::ofstream::out ) }
+   {
+      file << "__time__meanNs__varNs__optFq2x2__varQyz__varDxy__varY__" << std::endl;
+   }
+
+
+   void operator() ( const state_type& x, const double t )
+   {
+      // calculate physical quantities
+      mean = meanNs(x);
+      var  = varNs(x);
+      fis  = quantumFisherInf(x);
+
+      file << t << "\t"
+           << mean << "\t"
+           << var << "\t"
+           << fis[0] << "\t"
+           << fis[1] << "\t"
+           << fis[2] << "\t"
+           << fis[3] << std::endl;
    }
 
 private:
-   std::string system_type;
+
+   // variables
+   std::ofstream file;
+   // physical quantities
+   double mean;
+   double var;
+   std::array<double,4> fis;
 };
 
+} // namespace spinor
 #endif
 
 

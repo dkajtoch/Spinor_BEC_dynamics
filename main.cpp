@@ -1,13 +1,15 @@
 #include "evolution.hpp"
 
-#define PI boost::math::constants::pi<double>()
+using namespace spinor;
 
 int main() {
 
-   timeEvolution<20> system("symmetric");
-   state_type x = system.propagate(0.0,0.1);
+   const std::size_t N = 200;
 
-   system.saveAll(0.0, (PI/2.0), 500, "symmetric_N=20.dat");
+   quantumSystem<symmetricDynamics> sys(N);
+   state_type x = Fock_Mzero(N,0);
+
+   sys.propagate( x, 0.0, 0.1, writeAll("symmetric_N=200.dat"), 1000, 1.0E-06 );
 
    return 0;
 }
